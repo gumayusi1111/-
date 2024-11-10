@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文本处理工具</title>
+    <!-- 引入必要的库 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+        }
+        .preview-container {
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
+        .preview-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        #dropZone {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            background-color: #f8f9fa;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #dropZone.dragover {
+            border-color: #28a745;
+            background-color: #e8f5e9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">文本处理工具</h1>
+        
+        <!-- 文本输入区域 -->
+        <div class="mb-3">
+            <label for="inputText" class="form-label">输入文本：</label>
+            <textarea class="form-control" id="inputText" rows="10" placeholder="请输入要处理的文本..."></textarea>
+        </div>
+
+        <!-- Excel文件上传区域 -->
+        <div id="dropZone" class="mb-3">
+            <p class="mb-2">拖放Excel文件到这里或点击选择文件</p>
+            <input type="file" id="excelFile" accept=".xlsx,.xls" class="d-none">
+            <div id="fileInfo" class="text-muted"></div>
+        </div>
+
+        <!-- 追加设置 -->
+        <div class="mb-3" id="appendSettings" style="display: none;">
+            <label for="startRow" class="form-label">起始行号：</label>
+            <input type="number" class="form-control" id="startRow" value="1" min="1" style="width: 200px;">
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="d-flex gap-2 mb-3">
+            <button class="btn btn-primary" onclick="processText()">处理文本</button>
+            <button class="btn btn-success" onclick="exportNewExcel()">导出新Excel</button>
+            <button class="btn btn-info" onclick="appendToExcel()" id="appendBtn" disabled>追加到Excel</button>
+        </div>
+
+        <!-- 预览区域 -->
+        <div class="preview-container" id="previewArea" style="display: none;">
+            <h4>处理结果预览：</h4>
+            <div id="previewContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let processedData = [];
+        let existingWorkbook = null;
+
+        // 文件拖放处理
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('excelFile');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', handleFileDrop);
+        fileInput.addEventListener('change', handleFileSelect);
+
+        function handleFileDrop(e) {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) handleExcelFile(file);
+        }
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) handleExcelFile(file);
+        }
+
+        function handleExcelFile(file) {
+            if (!file.name.match(/\.(xlsx|xls)$/)) {
+                alert('请选择Excel文件！');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    existingWorkbook = XLSX.read(e.target.result, {type: 'array'});
+                    $('#fileInfo').text(`已加载: ${file.name}`);
+                    $('#appendSettings').show();
+                    $('#appendBtn').prop('disabled', false);
+                } catch (error) {
+                    alert('Excel文件读取失败！');
+                    console.error(error);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // 处理文本
+        function processText() {
+            const text = $('#inputText').val();
+            if (!text) {
+                alert('请输入要处理的文本！');
+                return;
+            }
+
+            // 按数字序号分割文本
+            const sections = text.split(/(?=\d+[\.\、])/);
+            processedData = [];
+
+            sections.forEach(section => {
+                if (section.trim()) {
+                    // 提取标题和内容
+                    const lines = section.split('\n').filter(line => line.trim());
+                    if (lines.length >= 2) {
+                        let title = lines[1].trim(); // 第二行通常是标题
+                        // 移除序号和特殊字符
+                        title = title.replace(/^\d+[\.\、]\s*/, '').replace(/标题[：:]\s*/, '');
+                        
+                        // 合并剩余行作为内容
+                        const content = lines.slice(2).join('\n').trim();
+                        
+                        processedData.push({title, content});
+                    }
+                }
+            });
+
+            displayPreview();
+        }
+
+        // 显示预览
+        function displayPreview() {
+            const previewContent = $('#previewContent');
+            previewContent.empty();
+            
+            processedData.forEach((item, index) => {
+                previewContent.append(`
+                    <div class="preview-item">
+                        <strong>A${index + 1}:</strong> ${item.title}<br>
+                        <strong>B${index + 1}:</strong> ${item.content}
+                    </div>
+                `);
+            });
+            
+            $('#previewArea').show();
+        }
+
+        // 导出新Excel
+        function exportNewExcel() {
+            if (processedData.length === 0) {
+                alert('请先处理文本！');
+                return;
+            }
+
+            const ws = XLSX.utils.json_to_sheet(processedData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "处理结果");
+
+            // 导出文件
+            XLSX.writeFile(wb, "文本处理结果.xlsx");
+        }
+
+        // 追加到现有Excel
+        function appendToExcel() {
+            if (!existingWorkbook || processedData.length === 0) {
+                alert('请确保已��择Excel文件并处理了文本！');
+                return;
+            }
+
+            const startRow = parseInt($('#startRow').val()) || 1;
+            const ws = existingWorkbook.Sheets[existingWorkbook.SheetNames[0]];
+            
+            // 获取现有数据
+            const existingData = XLSX.utils.sheet_to_json(ws);
+            
+            // 在指定位置插入新数据
+            const finalData = [
+                ...existingData.slice(0, startRow - 1),
+                ...processedData,
+                ...existingData.slice(startRow - 1)
+            ];
+
+            // 创建新的工作表
+            const newWs = XLSX.utils.json_to_sheet(finalData);
+            const newWb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(newWb, newWs, "处理结果");
+
+            // 导出文件
+            XLSX.writeFile(newWb, "更新后的结果.xlsx");
+        }
+    </script>
+</body>
+</html> 
